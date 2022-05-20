@@ -9,7 +9,6 @@ use {
     anchor_lang::{
         prelude::*,
         solana_program::{
-            log::sol_log_compute_units,
             program::{invoke, invoke_signed},
             serialize_utils::{read_pubkey, read_u16},
             system_instruction, sysvar,
@@ -25,7 +24,7 @@ use {
         },
     },
     spl_token::state::Mint,
-    std::{cell::RefMut, ops::Deref, str::FromStr},
+    std::{cell::RefMut, convert::TryInto, ops::Deref, str::FromStr},
 };
 use solana_program::sysvar::SysvarId;
 anchor_lang::declare_id!("cndy3Z4yapfJBmL3ShUp5exZKqR3z33thTzeNMm2gRZ");
@@ -272,10 +271,10 @@ pub mod nft_candy_machine_v2 {
 
         let index = u64::from_le_bytes(*most_recent);
         let modded: usize = index
-            .checked_rem(candy_machine.data.items_available)
+            .checked_rem(candy_machine.data.items_available - candy_machine.items_redeemed)
             .ok_or(ErrorCode::NumericalOverflowError)? as usize;
 
-        let config_line = get_config_line(&candy_machine, modded, candy_machine.items_redeemed)?;
+        let config_line = get_config_line(&candy_machine, modded)?;
 
         candy_machine.items_redeemed = candy_machine
             .items_redeemed
@@ -324,8 +323,6 @@ pub mod nft_candy_machine_v2 {
             ctx.accounts.rent.to_account_info(),
             candy_machine_creator.to_account_info(),
         ];
-        msg!("Before metadata");
-        sol_log_compute_units();
 
         invoke_signed(
             &create_metadata_accounts(
@@ -347,8 +344,6 @@ pub mod nft_candy_machine_v2 {
             &[&authority_seeds],
         )?;
 
-        msg!("Before master");
-        sol_log_compute_units();
         invoke_signed(
             &create_master_edition(
                 *ctx.accounts.token_metadata_program.key,
@@ -370,8 +365,6 @@ pub mod nft_candy_machine_v2 {
             new_update_authority = Some(ctx.accounts.update_authority.key());
         }
 
-        msg!("Before update");
-        sol_log_compute_units();
         invoke_signed(
             &update_metadata_accounts(
                 *ctx.accounts.token_metadata_program.key,
@@ -388,9 +381,6 @@ pub mod nft_candy_machine_v2 {
             ],
             &[&authority_seeds],
         )?;
-
-        msg!("Before instr check");
-        sol_log_compute_units();
 
         let instruction_sysvar_account_info = instruction_sysvar_account.to_account_info();
 
@@ -422,8 +412,6 @@ pub mod nft_candy_machine_v2 {
             }
         }
 
-        msg!("At the end");
-        sol_log_compute_units();
         Ok(())
     }
 
@@ -500,10 +488,16 @@ pub mod nft_candy_machine_v2 {
             &mut data[position..position + fixed_config_lines.len() * CONFIG_LINE_SIZE];
 
         array_slice.copy_from_slice(serialized);
-
+        // bit mask to determine the config lines written
         let bit_mask_vec_start = CONFIG_ARRAY_START
             + 4
             + (candy_machine.data.items_available as usize) * CONFIG_LINE_SIZE
+            + 4;
+        // (unordered) indices for the mint
+        let indices_vec_start = bit_mask_vec_start
+            + (candy_machine.data.items_available
+                .checked_div(8)
+                .ok_or(ErrorCode::NumericalOverflowError)? + 1) as usize
             + 4;
 
         let mut new_count = current_count;
@@ -538,6 +532,8 @@ pub mod nft_candy_machine_v2 {
                 new_count = new_count
                     .checked_add(1)
                     .ok_or(ErrorCode::NumericalOverflowError)?;
+                let mint_index = indices_vec_start + (position as usize) * 4;
+                data[mint_index..mint_index + 4].copy_from_slice(&u32::to_le_bytes(position as u32));
             }
         }
 
@@ -655,12 +651,12 @@ fn get_space_for_candy(data: CandyMachineData) -> core::result::Result<usize, Pr
         CONFIG_ARRAY_START
             + 4
             + (data.items_available as usize) * CONFIG_LINE_SIZE
-            + 8
-            + 2 * ((data
-            .items_available
-            .checked_div(8)
-            .ok_or(ErrorCode::NumericalOverflowError)?
-            + 1) as usize)
+            + 4
+            + ((data.items_available
+                .checked_div(8)
+                .ok_or(ErrorCode::NumericalOverflowError)? + 1) as usize)
+            + 4
+            + (data.items_available as usize) * 4
     };
 
     Ok(num)
@@ -874,120 +870,42 @@ pub fn get_config_count(data: &RefMut<&mut [u8]>) -> core::result::Result<usize,
     return Ok(u32::from_le_bytes(*array_ref![data, CONFIG_ARRAY_START, 4]) as usize);
 }
 
-pub fn get_good_index(
-    arr: &mut RefMut<&mut [u8]>,
-    items_available: usize,
-    index: usize,
-    pos: bool,
-) -> core::result::Result<(usize, bool), ProgramError> {
-    let mut index_to_use = index;
-    let mut taken = 1;
-    let mut found = false;
-    let bit_mask_vec_start = CONFIG_ARRAY_START
-        + 4
-        + (items_available) * CONFIG_LINE_SIZE
-        + 4
-        + items_available
-        .checked_div(8)
-        .ok_or(ErrorCode::NumericalOverflowError)?
-        + 4;
-
-    while taken > 0 && index_to_use < items_available {
-        let my_position_in_vec = bit_mask_vec_start
-            + index_to_use
-            .checked_div(8)
-            .ok_or(ErrorCode::NumericalOverflowError)?;
-        /*msg!(
-            "My position is {} and value there is {}",
-            my_position_in_vec,
-            arr[my_position_in_vec]
-        );*/
-        if arr[my_position_in_vec] == 255 {
-            //msg!("We are screwed here, move on");
-            let eight_remainder = 8 - index_to_use
-                .checked_rem(8)
-                .ok_or(ErrorCode::NumericalOverflowError)?;
-            let reversed = 8 - eight_remainder + 1;
-            if (eight_remainder != 0 && pos) || (reversed != 0 && !pos) {
-                //msg!("Moving by {}", eight_remainder);
-                if pos {
-                    index_to_use += eight_remainder;
-                } else {
-                    if index_to_use < 8 {
-                        break;
-                    }
-                    index_to_use -= reversed;
-                }
-            } else {
-                //msg!("Moving by 8");
-                if pos {
-                    index_to_use += 8;
-                } else {
-                    index_to_use -= 8;
-                }
-            }
-        } else {
-            let position_from_right = 7 - index_to_use
-                .checked_rem(8)
-                .ok_or(ErrorCode::NumericalOverflowError)?;
-            let mask = u8::pow(2, position_from_right as u32);
-
-            taken = mask & arr[my_position_in_vec];
-            if taken > 0 {
-                //msg!("Index to use {} is taken", index_to_use);
-                if pos {
-                    index_to_use += 1;
-                } else {
-                    if index_to_use == 0 {
-                        break;
-                    }
-                    index_to_use -= 1;
-                }
-            } else if taken == 0 {
-                //msg!("Index to use {} is not taken, exiting", index_to_use);
-                found = true;
-                arr[my_position_in_vec] = arr[my_position_in_vec] | mask;
-            }
-        }
-    }
-
-    Ok((index_to_use, found))
-}
-
 pub fn get_config_line<'info>(
-    a: &Account<'info, CandyMachine>,
+    candy_machine: &Account<'info, CandyMachine>,
     index: usize,
-    mint_number: u64,
 ) -> core::result::Result<ConfigLine, ProgramError> {
-    if let Some(hs) = &a.data.hidden_settings {
+    // current mint number
+    let mint_number = candy_machine.items_redeemed as usize;
+    // when hidden_settings are used, there are no config lines
+    if let Some(hs) = &candy_machine.data.hidden_settings {
         return Ok(ConfigLine {
             name: hs.name.clone() + "#" + &(mint_number + 1).to_string(),
             uri: hs.uri.clone(),
         });
     }
-    msg!("Index is set to {:?}", index);
-    let a_info = a.to_account_info();
 
+    let a_info = candy_machine.to_account_info();
     let mut arr = a_info.data.borrow_mut();
 
-    let (mut index_to_use, good) =
-        get_good_index(&mut arr, a.data.items_available as usize, index, true)?;
-    if !good {
-        let (index_to_use_new, good_new) =
-            get_good_index(&mut arr, a.data.items_available as usize, index, false)?;
-        index_to_use = index_to_use_new;
-        if !good_new {
-            return Err(ErrorCode::CannotFindUsableConfigLine.into());
-        }
-    }
+    let items_available = candy_machine.data.items_available as usize;
+    let indices_vec_start = CONFIG_ARRAY_START
+        + 4
+        + (items_available as usize) * CONFIG_LINE_SIZE
+        + 4
+        + ((items_available
+            .checked_div(8)
+            .ok_or(ErrorCode::NumericalOverflowError)? + 1) as usize)
+        + 4;
 
-    msg!(
-        "Index actually ends up due to used bools {:?}",
-        index_to_use
-    );
-    if arr[CONFIG_ARRAY_START + 4 + index_to_use * (CONFIG_LINE_SIZE)] == 1 {
-        return Err(ErrorCode::CannotFindUsableConfigLine.into());
-    }
+    // calculates the mint index and retrieves the value at that position
+    let mint_index = indices_vec_start + index * 4;
+    let index_to_use = u32::from_le_bytes(arr[mint_index..mint_index + 4].try_into().unwrap()) as usize;
+    // calculates the last available index and retrieves the value at that position
+    let last_index = indices_vec_start + (items_available - mint_number - 1) * 4;
+    let last_value = u32::from_le_bytes(arr[last_index..last_index + 4].try_into().unwrap());
+    // swap_remove: this guarantees that we remove the used mint index from the available array
+    // in a constant time O(1) no matter how big the indices array is
+    arr[mint_index..mint_index + 4].copy_from_slice(&u32::to_le_bytes(last_value));
 
     let data_array = &mut arr[CONFIG_ARRAY_START + 4 + index_to_use * (CONFIG_LINE_SIZE)
         ..CONFIG_ARRAY_START + 4 + (index_to_use + 1) * (CONFIG_LINE_SIZE)];
