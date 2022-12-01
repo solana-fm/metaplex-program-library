@@ -1,10 +1,11 @@
 #![cfg(feature = "test-bpf")]
 pub mod utils;
 
-use mpl_token_metadata::state::{UseAuthorityRecord, UseMethod, Uses};
-
-use mpl_token_metadata::error::MetadataError;
-use mpl_token_metadata::pda::find_use_authority_account;
+use mpl_token_metadata::{
+    error::MetadataError,
+    pda::find_use_authority_account,
+    state::{UseAuthorityRecord, UseMethod, Uses},
+};
 use num_traits::FromPrimitive;
 use solana_program_test::*;
 use solana_sdk::{
@@ -35,7 +36,6 @@ mod approve_use_authority {
                 None,
                 10,
                 false,
-                None,
                 None,
                 Some(Uses {
                     use_method: UseMethod::Single,
@@ -95,7 +95,6 @@ mod approve_use_authority {
                 10,
                 false,
                 None,
-                None,
                 Some(Uses {
                     use_method: UseMethod::Burn,
                     total: 1,
@@ -152,7 +151,6 @@ mod approve_use_authority {
                 None,
                 10,
                 false,
-                None,
                 None,
                 None,
             )
@@ -216,7 +214,6 @@ mod approve_use_authority {
                 None,
                 10,
                 false,
-                None,
                 None,
                 Some(Uses {
                     use_method: UseMethod::Single,
@@ -307,7 +304,6 @@ mod approve_use_authority {
                 10,
                 false,
                 None,
-                None,
                 Some(Uses {
                     use_method: UseMethod::Single,
                     total: 1,
@@ -375,7 +371,6 @@ mod approve_use_authority {
                 None,
                 10,
                 false,
-                None,
                 None,
                 Some(Uses {
                     use_method: UseMethod::Single,

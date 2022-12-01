@@ -29,7 +29,7 @@ export const setCollectionDuringMintStruct = new beet.BeetArgsStruct<{
  * @property [] tokenMetadataProgram
  * @property [] instructions
  * @property [] collectionMint
- * @property [] collectionMetadata
+ * @property [_writable_] collectionMetadata
  * @property [] collectionMasterEdition
  * @property [] authority
  * @property [] collectionAuthorityRecord
@@ -49,6 +49,7 @@ export type SetCollectionDuringMintInstructionAccounts = {
   collectionMasterEdition: web3.PublicKey;
   authority: web3.PublicKey;
   collectionAuthorityRecord: web3.PublicKey;
+  anchorRemainingAccounts?: web3.AccountMeta[];
 };
 
 export const setCollectionDuringMintInstructionDiscriminator = [103, 17, 200, 25, 118, 95, 125, 61];
@@ -106,7 +107,7 @@ export function createSetCollectionDuringMintInstruction(
     },
     {
       pubkey: accounts.collectionMetadata,
-      isWritable: false,
+      isWritable: true,
       isSigner: false,
     },
     {
@@ -125,6 +126,12 @@ export function createSetCollectionDuringMintInstruction(
       isSigner: false,
     },
   ];
+
+  if (accounts.anchorRemainingAccounts != null) {
+    for (const acc of accounts.anchorRemainingAccounts) {
+      keys.push(acc);
+    }
+  }
 
   const ix = new web3.TransactionInstruction({
     programId,

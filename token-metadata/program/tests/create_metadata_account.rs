@@ -83,7 +83,6 @@ mod create_meta_accounts {
                 10,
                 false,
                 None,
-                None,
                 uses.to_owned(),
             )
             .await
@@ -106,6 +105,7 @@ mod create_meta_accounts {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn fail_invalid_mint_authority() {
         let mut context = program_test().start_with_context().await;
         let test_metadata = Metadata::new();
@@ -244,7 +244,6 @@ mod create_meta_accounts {
                 false,
                 None,
                 None,
-                None,
             )
             .await
             .unwrap_err()
@@ -375,7 +374,6 @@ mod create_meta_accounts {
                 false,
                 None,
                 None,
-                None,
             )
             .await
             .unwrap();
@@ -456,7 +454,6 @@ mod create_meta_accounts {
                 10,
                 false,
                 None,
-                None,
                 Some(uses),
             )
             .await
@@ -529,7 +526,6 @@ mod create_meta_accounts {
                 None,
                 10,
                 false,
-                None,
                 None,
                 Some(uses.clone()),
             )

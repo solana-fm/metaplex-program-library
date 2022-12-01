@@ -1,9 +1,10 @@
 #![cfg(feature = "test-bpf")]
 pub mod utils;
 
-use mpl_token_metadata::state::{UseAuthorityRecord, UseMethod, Uses};
-
-use mpl_token_metadata::pda::find_use_authority_account;
+use mpl_token_metadata::{
+    pda::find_use_authority_account,
+    state::{UseAuthorityRecord, UseMethod, Uses},
+};
 use solana_program_test::*;
 use solana_sdk::{
     signature::{Keypair, Signer},
@@ -30,7 +31,6 @@ mod revoke_use_authority {
                 None,
                 10,
                 false,
-                None,
                 None,
                 Some(Uses {
                     use_method: UseMethod::Single,

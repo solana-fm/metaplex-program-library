@@ -23,7 +23,7 @@ export const withdrawFundsStruct = new beet.BeetArgsStruct<{
  * Accounts required by the _withdrawFunds_ instruction
  *
  * @property [_writable_] candyMachine
- * @property [**signer**] authority
+ * @property [_writable_, **signer**] authority
  * @category Instructions
  * @category WithdrawFunds
  * @category generated
@@ -31,6 +31,7 @@ export const withdrawFundsStruct = new beet.BeetArgsStruct<{
 export type WithdrawFundsInstructionAccounts = {
   candyMachine: web3.PublicKey;
   authority: web3.PublicKey;
+  anchorRemainingAccounts?: web3.AccountMeta[];
 };
 
 export const withdrawFundsInstructionDiscriminator = [241, 36, 29, 111, 208, 31, 104, 217];
@@ -58,10 +59,16 @@ export function createWithdrawFundsInstruction(
     },
     {
       pubkey: accounts.authority,
-      isWritable: false,
+      isWritable: true,
       isSigner: true,
     },
   ];
+
+  if (accounts.anchorRemainingAccounts != null) {
+    for (const acc of accounts.anchorRemainingAccounts) {
+      keys.push(acc);
+    }
+  }
 
   const ix = new web3.TransactionInstruction({
     programId,
