@@ -1,11 +1,10 @@
 use borsh::{maybestd::io::Error as BorshError, BorshDeserialize, BorshSerialize};
 use mpl_utils::{create_or_allocate_account_raw, token::get_mint_authority};
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_option::COption, pubkey,
-    pubkey::Pubkey,
+    account_info::AccountInfo, entrypoint::ProgramResult, program_option::COption, pubkey::Pubkey,
 };
 
-use super::*;
+use super::{compression::is_decompression, *};
 use crate::{
     assertions::{
         assert_mint_authority_matches_mint, assert_owned_by,
@@ -13,8 +12,8 @@ use crate::{
         uses::assert_valid_use,
     },
     state::{
-        Collection, CollectionDetails, Data, DataV2, Key, Metadata, TokenStandard, Uses, EDITION,
-        MAX_METADATA_LEN, PREFIX,
+        Collection, CollectionDetails, Data, DataV2, Key, Metadata, ProgrammableConfig,
+        TokenStandard, Uses, EDITION, MAX_METADATA_LEN, PREFIX,
     },
 };
 
@@ -33,13 +32,6 @@ pub const SEED_AUTHORITY: Pubkey = Pubkey::new_from_array([
 
 // This allows the Bubblegum program to add verified creators since they were verified as part of
 // the Bubblegum program.
-pub const BUBBLEGUM_PROGRAM_ADDRESS: Pubkey =
-    pubkey!("BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY");
-
-pub const BUBBLEGUM_SIGNER: Pubkey = pubkey!("4ewWZC5gT6TGpm5LZNDs9wVonfUT2q5PP5sc9kVbwMAK");
-
-// This flag activates certain program authority features of the Bubblegum program.
-pub const BUBBLEGUM_ACTIVATED: bool = true;
 
 pub struct CreateMetadataAccountsLogicArgs<'a> {
     pub metadata_account_info: &'a AccountInfo<'a>,
@@ -72,8 +64,10 @@ pub fn process_create_metadata_accounts_logic(
 
     let mut update_authority_key = *update_authority_info.key;
     let existing_mint_authority = get_mint_authority(mint_info)?;
-    // IMPORTANT NOTE
-    // This allows the Metaplex Foundation to Create but not update metadata for SPL tokens that have not populated their metadata.
+
+    // IMPORTANT NOTE:
+    // This allows the Metaplex Foundation to Create but not update metadata for SPL tokens that
+    // have not populated their metadata.
     assert_mint_authority_matches_mint(&existing_mint_authority, mint_authority_info).or_else(
         |e| {
             // Allow seeding by the authority seed populator
@@ -123,14 +117,8 @@ pub fn process_create_metadata_accounts_logic(
 
     // This allows the Bubblegum program to create metadata with verified creators since they were
     // verified already by the Bubblegum program.
-    let allow_direct_creator_writes = if BUBBLEGUM_ACTIVATED
-        && mint_authority_info.owner == &BUBBLEGUM_PROGRAM_ADDRESS
-        && mint_authority_info.is_signer
-    {
-        true
-    } else {
-        allow_direct_creator_writes
-    };
+    let allow_direct_creator_writes =
+        allow_direct_creator_writes || is_decompression(mint_info, mint_authority_info);
 
     assert_data_valid(
         &compatible_data,
@@ -188,7 +176,8 @@ pub fn process_create_metadata_accounts_logic(
     ];
     let (_, edition_bump_seed) = Pubkey::find_program_address(edition_seeds, program_id);
     metadata.edition_nonce = Some(edition_bump_seed);
-    metadata.serialize(&mut *metadata_account_info.data.borrow_mut())?;
+    // saves the changes to the account data
+    metadata.save(&mut metadata_account_info.data.borrow_mut())?;
 
     Ok(())
 }
@@ -220,9 +209,13 @@ pub fn meta_deser_unchecked(buf: &mut &[u8]) -> Result<Metadata, BorshError> {
     let collection_details_res: Result<Option<CollectionDetails>, BorshError> =
         BorshDeserialize::deserialize(buf);
 
-    /* We can have accidentally valid, but corrupted data, particularly on the Collection struct,
-    so to increase probability of catching errors If any of these deserializations fail, set all values to None.
-    */
+    // pNFT - Programmable Config
+    let programmable_config_res: Result<Option<ProgrammableConfig>, BorshError> =
+        BorshDeserialize::deserialize(buf);
+
+    // We can have accidentally valid, but corrupted data, particularly on the Collection struct,
+    // so to increase probability of catching errors. If any of these deserializations fail, set
+    // all values to None.
     let (token_standard, collection, uses) = match (token_standard_res, collection_res, uses_res) {
         (Ok(token_standard_res), Ok(collection_res), Ok(uses_res)) => {
             (token_standard_res, collection_res, uses_res)
@@ -230,11 +223,14 @@ pub fn meta_deser_unchecked(buf: &mut &[u8]) -> Result<Metadata, BorshError> {
         _ => (None, None, None),
     };
 
-    // Handle v1.3 separately
+    // V1.3
     let collection_details = match collection_details_res {
         Ok(details) => details,
         Err(_) => None,
     };
+
+    // Programmable Config
+    let programmable_config = programmable_config_res.unwrap_or(None);
 
     let metadata = Metadata {
         key,
@@ -248,6 +244,7 @@ pub fn meta_deser_unchecked(buf: &mut &[u8]) -> Result<Metadata, BorshError> {
         collection,
         uses,
         collection_details,
+        programmable_config,
     };
 
     Ok(metadata)
@@ -349,6 +346,7 @@ pub mod tests {
             collection: None,
             uses: None,
             collection_details: None,
+            programmable_config: None,
         };
 
         puff_out_data_fields(&mut metadata);

@@ -1,7 +1,7 @@
 import { PROGRAM_ID, Creator, MetadataArgs, metadataArgsBeet } from './generated';
 import { keccak_256 } from 'js-sha3';
 import { PublicKey } from '@solana/web3.js';
-import { BN } from '@project-serum/anchor';
+import BN from 'bn.js';
 
 export * from './generated';
 
@@ -31,7 +31,7 @@ export function computeCreatorHash(creators: Creator[]): Buffer {
       creator.address.toBuffer(),
       Buffer.from([creator.share]),
     ]);
-    bufferOfCreatorShares = Buffer.concat([bufferOfCreatorShares, Buffer.from([creator.share])]);
+    bufferOfCreatorShares = Buffer.concat([bufferOfCreatorShares, Buffer.from([creator.verified ? 1 : 0]), Buffer.from([creator.share])]);
   }
   return Buffer.from(keccak_256.digest(bufferOfCreatorData));
 }
